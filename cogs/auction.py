@@ -1,10 +1,15 @@
+import time
 import discord
 
 from discord.ext import commands
-from discord import app_commands
 
-from utils.checks import owner_only
-from utils.embeds import auction_embed
+from database import (
+    get_active_auction,
+    add_bid,
+    update_price
+)
+
+from utils.parser import parse_bid
 
 
 class Auction(commands.Cog):
@@ -13,56 +18,70 @@ class Auction(commands.Cog):
         self.bot = bot
 
 
-    @app_commands.command(
-        name="auction_create",
-        description="สร้างการประมูล"
-    )
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
 
-    async def auction_create(
+        # กันบอท
+        if message.author.bot:
+            return
 
-        self,
-        interaction: discord.Interaction,
+        # ตรวจว่าพิมพ์เป็นตัวเลขหรือไม่
+        bid = parse_bid(message.content)
 
-        item: str,
+        if bid is None:
+            return
 
-        description: str,
+        # ตรวจว่าห้องนี้มีประมูลอยู่หรือไม่
+        auction = await get_active_auction(message.channel.id)
 
-        price: app_commands.Range[int,1],
+        if auction is None:
+            return
 
-        minimum: app_commands.Range[int,1],
+        # ลบข้อความการบิดเพื่อให้ห้องสะอาด
+        try:
+            await message.delete()
+        except:
+            pass
 
-        minutes: app_commands.Range[int,1,1440],
+        # ห้ามบิดต่อราคาตัวเอง
+        if auction["highest_bidder"] == message.author.id:
 
-        image: str = None
-
-    ):
-
-        if not owner_only(interaction):
-
-            return await interaction.response.send_message(
-                "❌ ไม่มีสิทธิ์",
-                ephemeral=True
+            return await message.channel.send(
+                f"❌ {message.author.mention} คุณเป็นผู้นำอยู่แล้ว",
+                delete_after=5
             )
 
-        embed = auction_embed(
-            item,
-            description,
-            image,
-            price,
-            minimum,
-            minutes
+        # ตรวจขั้นต่ำ
+        minimum_price = auction["current_price"] + auction["minimum_bid"]
+
+        if bid < minimum_price:
+
+            return await message.channel.send(
+                f"❌ ต้องบิดอย่างน้อย **{minimum_price:,} บาท**",
+                delete_after=5
+            )
+
+        # บันทึกข้อมูล
+        await add_bid(
+            auction["id"],
+            message.author.id,
+            bid,
+            int(time.time())
         )
 
-        await interaction.channel.send(
-            embed=embed
+        # อัปเดตราคาปัจจุบัน
+        await update_price(
+            auction["id"],
+            bid,
+            message.author.id
         )
 
-        await interaction.response.send_message(
-            "✅ สร้างประมูลเรียบร้อย",
-            ephemeral=True
+        # แจ้งผล
+        await message.channel.send(
+            f"🔨 {message.author.mention} บิด **{bid:,} บาท** สำเร็จ!",
+            delete_after=8
         )
 
 
 async def setup(bot):
-
     await bot.add_cog(Auction(bot))
