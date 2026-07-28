@@ -16,7 +16,7 @@ if not BOT_TOKEN:
     raise ValueError("ไม่พบ BOT_TOKEN ใน Environment Variables! กรุณาตั้งค่าใน Railway Settings")
 
 # 🔒 ใส่ Discord User ID ของคุณตรงนี้ (เฉพาะไอดีนี้ที่จะพิมพ์สั่ง /setup_panel ได้)
-ALLOWED_USER_ID = 123456789012345678  
+ALLOWED_USER_ID = 933529869487321161  
 
 # 📂 กำหนด ID ของหมวดหมู่ต่างๆ
 AUCTION_CATEGORY_ID = 1531512841494855790  # Zone หมวดหมู่สำหรับสร้างห้องประมูล
