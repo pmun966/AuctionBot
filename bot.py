@@ -15,11 +15,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("ไม่พบ BOT_TOKEN ใน Environment Variables! กรุณาตั้งค่าใน Railway Settings")
 
-# 🔒 ใส่ Discord User ID ของคุณที่ได้รับอนุญาต
+# 🔒 ใส่ Discord User ID ของคุณตรงนี้ (เฉพาะไอดีนี้ที่จะพิมพ์สั่ง /setup_panel ได้)
 ALLOWED_USER_ID = 123456789012345678  
 
-# 📂 กำหนด ID ของห้องและหมวดหมู่ต่างๆ
-SETUP_CHANNEL_ID = 111111111111111111     # ห้องที่มีปุ่มสร้างประมูล (Control Panel)
+# 📂 กำหนด ID ของหมวดหมู่ต่างๆ
 AUCTION_CATEGORY_ID = 222222222222222222  # Zone หมวดหมู่สำหรับสร้างห้องประมูล
 PAYMENT_CATEGORY_ID = 333333333333333333  # Zone หมวดหมู่สำหรับห้องสรุปจ่ายเงิน
 # =======================================================
@@ -141,7 +140,7 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
         await interaction.followup.send(f"✅ สร้างห้องประมูลเรียบร้อยแล้วที่ {new_channel.mention}", ephemeral=True)
 
 # ----------------------------------------------------
-# VIEW: ปุ่มกดหน้าแผงควบคุม
+# VIEW: ปุ่มกดหน้าแผงควบคุม (เปิดให้ทุกคนกดได้)
 # ----------------------------------------------------
 class PanelView(discord.ui.View):
     def __init__(self):
@@ -149,10 +148,7 @@ class PanelView(discord.ui.View):
 
     @discord.ui.button(label="➕ เปิดการประมูลใหม่", style=discord.ButtonStyle.primary, custom_id="btn_panel_create")
     async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if interaction.user.id != ALLOWED_USER_ID:
-            await interaction.response.send_message("❌ **คุณไม่มีสิทธิ์ใช้งานระบบนี้!**", ephemeral=True)
-            return
-
+        # ✅ เปิดให้สมาชิกทุกคนสามารถกดปุ่มเปิดประมูลได้
         await interaction.response.send_modal(CreateAuctionModal())
 
 # ----------------------------------------------------
@@ -306,11 +302,15 @@ async def auction_checker():
         await asyncio.sleep(5)
 
 # ----------------------------------------------------
-# COMMAND: ติดตั้งแผงควบคุม (/setup_panel)
+# COMMAND: ติดตั้งแผงควบคุม (/setup_panel) [🔒 เฉพาะไอดีคุณ]
 # ----------------------------------------------------
-@bot.tree.command(name="setup_panel", description="ตั้งค่าแผงควบคุมสร้างประมูลในห้องนี้ (เฉพาะ Admin)")
-@app_commands.checks.has_permissions(administrator=True)
+@bot.tree.command(name="setup_panel", description="ตั้งค่าแผงควบคุมสร้างประมูลในห้องนี้ (เฉพาะเจ้าของบอท)")
 async def setup_panel(interaction: discord.Interaction):
+    # 🔒 เช็กสิทธิ์ว่าใช่ไอดีคุณหรือไม่
+    if interaction.user.id != ALLOWED_USER_ID:
+        await interaction.response.send_message("❌ **คุณไม่มีสิทธิ์ใช้คำสั่งนี้!**", ephemeral=True)
+        return
+
     embed = discord.Embed(
         title="🔨 แผงควบคุมระบบประมูล",
         description="กดปุ่มด้านล่างเพื่อเปิดสร้างห้องประมูลสินค้าใหม่",
