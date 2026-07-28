@@ -14,14 +14,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("ไม่พบ BOT_TOKEN ใน Environment Variables! กรุณาตั้งค่าใน Railway Settings")
 
+# 🔒 Discord User ID สำหรับเจ้าของบอท (เฉพาะไอดีนี้ที่ใช้ /setup_panel ได้)
 ALLOWED_USER_ID = 933529869487321161  
+
+# 📂 ID ของหมวดหมู่ต่างๆ
 AUCTION_CATEGORY_ID = 1531512841494855790  
 PAYMENT_CATEGORY_ID = 1531512976480403556  
 # =======================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # เปิดสิทธิ์รับข้อมูลสมาชิก
+intents.members = True  # สิทธิ์ดึงข้อมูลสมาชิก
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ----------------------------------------------------
@@ -48,6 +51,7 @@ async def init_db():
         """)
         await db.commit()
 
+# Helper Embed สำหรับแสดงรายละเอียดการประมูล
 def build_auction_embed(item_name, start_price, min_step, current_price, seller_id, bidder_name, bidder_id, end_time, image_url=None, status="🟢 กำลังประมูล"):
     embed = discord.Embed(
         title=f"📢 เปิดประมูล: {item_name}",
@@ -70,7 +74,7 @@ def build_auction_embed(item_name, start_price, min_step, current_price, seller_
     return embed
 
 # ----------------------------------------------------
-# MODAL: แบบฟอร์มกรอกข้อมูลประมูล
+# MODAL: แบบฟอร์มกรอกข้อมูลประมูล (5 ช่องพอดี)
 # ----------------------------------------------------
 class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการประมูลใหม่"):
     item_name = discord.ui.TextInput(label="ชื่อสินค้า", placeholder="เช่น ดาบเพชร / ไอดีเกม", required=True)
@@ -93,7 +97,7 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
         auction_cat = guild.get_channel(AUCTION_CATEGORY_ID)
 
         if not auction_cat:
-            await interaction.response.send_message("❌ ไม่พบ Category สำหรับสร้างห้องประมูล กรุณาเช็ก ID หมวดหมู่!", ephemeral=True)
+            await interaction.response.send_message("❌ ไม่พบ Category สำหรับสร้างห้องประมูล กรุณาเช็ก AUCTION_CATEGORY_ID!", ephemeral=True)
             return
 
         await interaction.response.send_message("⏳ กำลังสร้างห้องประมูล...", ephemeral=True)
@@ -139,7 +143,7 @@ class PanelView(discord.ui.View):
         await interaction.response.send_modal(CreateAuctionModal())
 
 # ----------------------------------------------------
-# EVENT: ดักจับการบิดประมูล
+# EVENT: ดักจับการบิดประมูล (พิมพ์ ชื่อ ราคา)
 # ----------------------------------------------------
 @bot.event
 async def on_message(message: discord.Message):
@@ -182,6 +186,7 @@ async def on_message(message: discord.Message):
         is_extended = False
         new_end_time = end_time
 
+        # ถ้าระยะเวลาเหลือน้อยกว่า 10 นาที ต่อเวลาให้อัตโนมัติ
         if time_left <= 600:
             new_end_time += 600
             is_extended = True
@@ -217,7 +222,7 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 # ----------------------------------------------------
-# LOOP: ปิดประมูล + ย้ายไป Zone จ่ายเงิน (ปรับปรุงใหม่)
+# LOOP: ปิดประมูล + ย้ายไป Zone จ่ายเงิน
 # ----------------------------------------------------
 async def auction_checker():
     await bot.wait_until_ready()
@@ -232,69 +237,83 @@ async def auction_checker():
                 (channel_id, message_id, seller_id, item_name, start_price, target_price, 
                  min_step, current_price, highest_bidder_id, highest_bidder_name, end_time, image_url, status) = auction
 
-                # อัปเดตสถานะใน DB ก่อน
-                async with aiosqlite.connect("auctions_v5.db") as db:
-                    await db.execute("UPDATE active_auctions SET status = 'ENDED' WHERE channel_id = ?", (channel_id,))
-                    await db.commit()
-
                 channel = bot.get_channel(channel_id)
-                if channel:
-                    guild = channel.guild
+                if not channel:
+                    continue
 
-                    if highest_bidder_id:
-                        # ดึงข้อมูลผู้ชนะและผู้ขายแบบดึงตรงจาก Discord Server
-                        try:
-                            winner = await guild.fetch_member(highest_bidder_id)
-                        except Exception:
-                            winner = None
+                guild = channel.guild
 
-                        try:
-                            seller = await guild.fetch_member(seller_id)
-                        except Exception:
-                            seller = None
+                if highest_bidder_id:
+                    pay_category = guild.get_channel(PAYMENT_CATEGORY_ID)
 
-                        pay_category = guild.get_channel(PAYMENT_CATEGORY_ID)
+                    # ตรวจสอบว่ามีหมวดหมู่สำหรับผู้ชนะหรือไม่
+                    if not pay_category:
+                        await channel.send("❌ **ปิดประมูลล้มเหลว:** หาหมวดหมู่สำหรับผู้ชนะประมูลไม่เจอ! (กรุณาเช็ก PAYMENT_CATEGORY_ID)")
+                        continue
 
-                        overwrites = {
-                            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-                        }
+                    try:
+                        winner = await guild.fetch_member(highest_bidder_id)
+                        seller = await guild.fetch_member(seller_id)
+                    except Exception:
+                        winner = None
+                        seller = None
 
-                        if winner:
-                            overwrites[winner] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-                        if seller:
-                            overwrites[seller] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                    overwrites = {
+                        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                        guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                    }
 
-                        pay_room_name = f"💳-{highest_bidder_name}-{item_name}"[:30]
+                    if winner:
+                        overwrites[winner] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                    if seller:
+                        overwrites[seller] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+
+                    pay_room_name = f"💳-{highest_bidder_name}-{item_name}"[:30]
+
+                    try:
+                        # สร้างห้องจ่ายเงินในหมวดหมู่ผู้ชนะ
                         pay_channel = await guild.create_text_channel(
                             name=pay_room_name,
                             category=pay_category,
                             overwrites=overwrites
                         )
+                    except Exception as err:
+                        await channel.send(f"❌ **สร้างห้องผู้ชนะประมูลล้มเหลว:** `{err}`\n*(กรุณาเช็กสิทธิ์ Manage Channels ของบอทในหมวดหมู่ผู้ชนะ)*")
+                        continue
 
-                        pay_embed = discord.Embed(
-                            title=f"💳 สรุปรายการประมูลจบแล้ว: {item_name}",
-                            description="ห้องนี้เห็นเฉพาะ **Admin, ผู้ขาย และ ผู้ชนะ** เพื่อส่งมอบของและจ่ายเงินครับ",
-                            color=discord.Color.gold(),
-                            timestamp=datetime.now(timezone.utc)
-                        )
-                        if image_url:
-                            pay_embed.set_thumbnail(url=image_url)
+                    # เมื่อสร้างห้องสำเร็จ อัปเดตสถานะใน DB
+                    async with aiosqlite.connect("auctions_v5.db") as db:
+                        await db.execute("UPDATE active_auctions SET status = 'ENDED' WHERE channel_id = ?", (channel_id,))
+                        await db.commit()
 
-                        pay_embed.add_field(name="📦 สินค้า", value=item_name, inline=True)
-                        pay_embed.add_field(name="💰 ราคาสุดท้าย", value=f"**{current_price:,}** บาท", inline=True)
-                        pay_embed.add_field(name="👑 ผู้ชนะ", value=f"<@{highest_bidder_id}> (ชื่อบิด: **{highest_bidder_name}**)", inline=False)
-                        pay_embed.add_field(name="👤 เจ้าของประมูล", value=f"<@{seller_id}>", inline=False)
+                    pay_embed = discord.Embed(
+                        title=f"💳 สรุปรายการประมูลจบแล้ว: {item_name}",
+                        description="ห้องนี้เห็นเฉพาะ **Admin, ผู้ขาย และ ผู้ชนะ** เพื่อส่งมอบของและจ่ายเงินครับ",
+                        color=discord.Color.gold(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    if image_url:
+                        pay_embed.set_thumbnail(url=image_url)
 
-                        winner_mention = winner.mention if winner else f"<@{highest_bidder_id}>"
-                        await pay_channel.send(content=f"🔔 แจ้งเตือน: {winner_mention} | <@{seller_id}>", embed=pay_embed)
+                    pay_embed.add_field(name="📦 สินค้า", value=item_name, inline=True)
+                    pay_embed.add_field(name="💰 ราคาสุดท้าย", value=f"**{current_price:,}** บาท", inline=True)
+                    pay_embed.add_field(name="👑 ผู้ชนะ", value=f"<@{highest_bidder_id}> (ชื่อบิด: **{highest_bidder_name}**)", inline=False)
+                    pay_embed.add_field(name="👤 เจ้าของประมูล", value=f"<@{seller_id}>", inline=False)
 
-                        await asyncio.sleep(3)
-                        await channel.delete(reason="จบการประมูลแล้ว ย้ายไปห้องจ่ายเงิน")
-                    else:
-                        await channel.send("🔴 **ปิดการประมูล** (ไม่มีผู้เสนอราคา ห้องนี้จะถูกลบใน 10 วินาที)")
-                        await asyncio.sleep(10)
-                        await channel.delete()
+                    winner_mention = winner.mention if winner else f"<@{highest_bidder_id}>"
+                    await pay_channel.send(content=f"🔔 แจ้งเตือน: {winner_mention} | <@{seller_id}>", embed=pay_embed)
+
+                    await asyncio.sleep(3)
+                    await channel.delete(reason="จบการประมูลแล้ว ย้ายไปห้องจ่ายเงิน")
+
+                else:
+                    async with aiosqlite.connect("auctions_v5.db") as db:
+                        await db.execute("UPDATE active_auctions SET status = 'ENDED' WHERE channel_id = ?", (channel_id,))
+                        await db.commit()
+
+                    await channel.send("🔴 **ปิดการประมูล** (ไม่มีผู้เสนอราคา ห้องนี้จะถูกลบใน 10 วินาที)")
+                    await asyncio.sleep(10)
+                    await channel.delete()
 
         except Exception as e:
             print(f"Auction loop error: {e}")
