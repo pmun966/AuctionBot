@@ -5,18 +5,23 @@ import aiosqlite
 import asyncio
 import re
 import time
+import os
 from datetime import datetime, timezone
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
+# 🔒 ดึง BOT_TOKEN จาก Environment Variables ของ Railway
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# 🔒 ล็อคเฉพาะ User ID ของคุณที่ได้รับอนุญาต
+if not BOT_TOKEN:
+    raise ValueError("ไม่พบ BOT_TOKEN ใน Environment Variables! กรุณาตั้งค่าใน Railway Settings")
+
+# 🔒 ใส่ Discord User ID ของคุณที่ได้รับอนุญาต
 ALLOWED_USER_ID = 123456789012345678  
 
 # 📂 กำหนด ID ของห้องและหมวดหมู่ต่างๆ
-SETUP_CHANNEL_ID = 1531513388838948985     # ห้องที่มีปุ่มสร้างประมูล (Control Panel)
-AUCTION_CATEGORY_ID = 1531512841494855790  # Zone หมวดหมู่สำหรับสร้างห้องประมูล
-PAYMENT_CATEGORY_ID = 1531512976480403556  # Zone หมวดหมู่สำหรับห้องสรุปจ่ายเงิน
+SETUP_CHANNEL_ID = 111111111111111111     # ห้องที่มีปุ่มสร้างประมูล (Control Panel)
+AUCTION_CATEGORY_ID = 222222222222222222  # Zone หมวดหมู่สำหรับสร้างห้องประมูล
+PAYMENT_CATEGORY_ID = 333333333333333333  # Zone หมวดหมู่สำหรับห้องสรุปจ่ายเงิน
 # =======================================================
 
 intents = discord.Intents.default()
@@ -144,7 +149,6 @@ class PanelView(discord.ui.View):
 
     @discord.ui.button(label="➕ เปิดการประมูลใหม่", style=discord.ButtonStyle.primary, custom_id="btn_panel_create")
     async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # 🔒 ล็อคสิทธิ์เฉพาะไอดีที่กำหนด
         if interaction.user.id != ALLOWED_USER_ID:
             await interaction.response.send_message("❌ **คุณไม่มีสิทธิ์ใช้งานระบบนี้!**", ephemeral=True)
             return
@@ -191,7 +195,6 @@ async def on_message(message: discord.Message):
 
         previous_bidder_id = highest_bidder_id
         
-        # ⏰ ต่อเวลา 10 นาที ถ้าราคาถูกบิดก่อนหมดเวลาไม่เกิน 10 นาที
         time_left = end_time - now_ts
         is_extended = False
         new_end_time = end_time
@@ -216,7 +219,6 @@ async def on_message(message: discord.Message):
 
         await message.reply(reply_msg)
 
-        # อัปเดต Embed
         try:
             main_msg = await message.channel.fetch_message(message_id)
             updated_embed = build_auction_embed(
@@ -260,7 +262,6 @@ async def auction_checker():
                         seller = guild.get_member(seller_id)
                         pay_category = guild.get_channel(PAYMENT_CATEGORY_ID)
 
-                        # 🔒 กำหนดสิทธิ์ห้องใน Zone จ่ายเงิน (เห็นเฉพาะ Admin + เจ้าของ + ผู้ชนะ)
                         overwrites = {
                             guild.default_role: discord.PermissionOverwrite(read_messages=False),
                             winner: discord.PermissionOverwrite(read_messages=True, send_messages=True),
@@ -269,7 +270,6 @@ async def auction_checker():
                         if seller:
                             overwrites[seller] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-                        # สร้างห้องส่วนตัวใน Zone จ่ายเงิน
                         pay_room_name = f"💳-{highest_bidder_name}-{item_name}"[:30]
                         pay_channel = await guild.create_text_channel(
                             name=pay_room_name,
@@ -277,7 +277,6 @@ async def auction_checker():
                             overwrites=overwrites
                         )
 
-                        # ส่งข้อความสรุปรายการในห้องใหม่
                         pay_embed = discord.Embed(
                             title=f"💳 สรุปรายการประมูลจบแล้ว: {item_name}",
                             description="ห้องนี้เห็นเฉพาะ **Admin, ผู้ขาย และ ผู้ชนะ** เพื่อส่งมอบของและจ่ายเงินครับ",
@@ -294,7 +293,6 @@ async def auction_checker():
 
                         await pay_channel.send(content=f"🔔 แจ้งเตือน: {winner.mention} | <@{seller_id}>", embed=pay_embed)
 
-                        # ลบห้องประมูลเดิมทิ้งเมื่อจบ
                         await asyncio.sleep(3)
                         await channel.delete(reason="จบการประมูลแล้ว ย้ายไปห้องจ่ายเงิน")
                     else:
@@ -329,7 +327,6 @@ async def setup_panel(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     await init_db()
-    # ลงทะเบียน Persistent View ปุ่มกดแผงควบคุม
     bot.add_view(PanelView())
     await bot.tree.sync()
     bot.loop.create_task(auction_checker())
