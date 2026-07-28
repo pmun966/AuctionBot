@@ -14,7 +14,10 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("ไม่พบ BOT_TOKEN ใน Environment Variables! กรุณาตั้งค่าใน Railway Settings")
 
+# 🔒 ใส่ Discord User ID ของคุณตรงนี้ (เฉพาะไอดีนี้ที่พิมพ์สั่ง /setup_panel ได้)
 ALLOWED_USER_ID = 933529869487321161  
+
+# 📂 กำหนด ID ของหมวดหมู่ต่างๆ
 AUCTION_CATEGORY_ID = 1531512841494855790  
 PAYMENT_CATEGORY_ID = 1531512976480403556  
 # =======================================================
@@ -48,7 +51,7 @@ async def init_db():
         await db.commit()
 
 # Helper Embed สำหรับห้องประมูล
-def build_auction_embed(item_name, start_price, target_price, min_step, current_price, seller_id, bidder_name, bidder_id, end_time, image_url=None, status="🟢 กำลังประมูล"):
+def build_auction_embed(item_name, start_price, min_step, current_price, seller_id, bidder_name, bidder_id, end_time, image_url=None, status="🟢 กำลังประมูล"):
     embed = discord.Embed(
         title=f"📢 เปิดประมูล: {item_name}",
         color=discord.Color.green() if "กำลัง" in status else discord.Color.red(),
@@ -59,9 +62,8 @@ def build_auction_embed(item_name, start_price, target_price, min_step, current_
         
     embed.add_field(name="👤 เจ้าของประมูล", value=f"<@{seller_id}>", inline=True)
     embed.add_field(name="🏷️ ราคาเริ่มต้น", value=f"{start_price:,} บาท", inline=True)
-    embed.add_field(name="🎯 ยอดที่เล็งไว้ (Target)", value=f"{target_price:,} บาท" if target_price > 0 else "ไม่มี", inline=True)
-    
     embed.add_field(name="📈 บิดขั้นต่ำครั้งละ", value=f"+{min_step:,} บาท", inline=True)
+    
     embed.add_field(name="💰 ราคาปัจจุบัน", value=f"**{current_price:,}** บาท", inline=True)
     
     bidder_display = f"{bidder_name} (<@{bidder_id}>)" if bidder_id else "ยังไม่มีผู้ประมูล"
@@ -72,14 +74,13 @@ def build_auction_embed(item_name, start_price, target_price, min_step, current_
     return embed
 
 # ----------------------------------------------------
-# MODAL: แบบฟอร์มกรอกข้อมูลประมูล (Popup)
+# MODAL: แบบฟอร์มกรอกข้อมูลประมูล (5 ช่องพอดี)
 # ----------------------------------------------------
 class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการประมูลใหม่"):
     item_name = discord.ui.TextInput(label="ชื่อสินค้า", placeholder="เช่น ดาบเพชร / ไอดีเกม", required=True)
     start_price = discord.ui.TextInput(label="ราคาเริ่มต้น (บาท)", placeholder="เช่น 100", required=True)
     min_step = discord.ui.TextInput(label="บิดขั้นต่ำครั้งละ (บาท)", placeholder="เช่น 10", required=True)
     duration_min = discord.ui.TextInput(label="ระยะเวลาประมูล (นาที)", placeholder="เช่น 30", required=True)
-    target_price = discord.ui.TextInput(label="ยอดที่เล็งไว้ (ใส่ 0 ถ้าไม่มี)", placeholder="เช่น 500", default="0", required=False)
     image_url = discord.ui.TextInput(label="ลิงก์รูปภาพสินค้า (URL ออปชันเสริม)", placeholder="https://i.imgur.com/...", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -87,7 +88,6 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
             val_start = int(self.start_price.value)
             val_step = int(self.min_step.value)
             val_dur = int(self.duration_min.value)
-            val_target = int(self.target_price.value) if self.target_price.value else 0
         except ValueError:
             await interaction.response.send_message("❌ กรุณากรอก ตัวเลข ให้ถูกต้องในช่องราคาและเวลา!", ephemeral=True)
             return
@@ -100,10 +100,9 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
             await interaction.response.send_message("❌ ไม่พบ Category สำหรับสร้างห้องประมูล กรุณาเช็ก ID หมวดหมู่!", ephemeral=True)
             return
 
-        # ตอบกลับชั่วคราวก่อนเริ่มสร้างช่อง
         await interaction.response.send_message("⏳ กำลังสร้างห้องประมูล...", ephemeral=True)
 
-        # 1. สร้างห้องประมูลใหม่ใน Zone ประมูล
+        # 1. สร้างห้องประมูลใหม่
         channel_name = f"🔨-{self.item_name.value}"[:30]
         new_channel = await guild.create_text_channel(name=channel_name, category=auction_cat)
 
@@ -113,7 +112,6 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
         embed = build_auction_embed(
             item_name=self.item_name.value,
             start_price=val_start,
-            target_price=val_target,
             min_step=val_step,
             current_price=val_start,
             seller_id=interaction.user.id,
@@ -130,8 +128,8 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
             await db.execute("""
                 INSERT INTO active_auctions 
                 (channel_id, message_id, seller_id, item_name, start_price, target_price, min_step, current_price, highest_bidder_id, highest_bidder_name, end_time, image_url, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '', ?, ?, 'ACTIVE')
-            """, (new_channel.id, msg.id, interaction.user.id, self.item_name.value, val_start, val_target, val_step, val_start, end_time, img))
+                VALUES (?, ?, ?, ?, ?, 0, ?, ?, NULL, '', ?, ?, 'ACTIVE')
+            """, (new_channel.id, msg.id, interaction.user.id, self.item_name.value, val_start, val_step, val_start, end_time, img))
             await db.commit()
 
         await interaction.edit_original_response(content=f"✅ สร้างห้องประมูลเรียบร้อยแล้วที่ {new_channel.mention}")
@@ -141,11 +139,10 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
 # ----------------------------------------------------
 class PanelView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None) # persistent view
+        super().__init__(timeout=None)
 
-    @discord.ui.button(label="➕ เปิดการประมูลใหม่", style=discord.ButtonStyle.primary, custom_id="btn_panel_create_v2")
+    @discord.ui.button(label="➕ เปิดการประมูลใหม่", style=discord.ButtonStyle.primary, custom_id="btn_panel_create_v3")
     async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ส่ง Modal โดยตรงทันที ป้องกัน Interaction Timeout
         await interaction.response.send_modal(CreateAuctionModal())
 
 # ----------------------------------------------------
@@ -215,7 +212,7 @@ async def on_message(message: discord.Message):
         try:
             main_msg = await message.channel.fetch_message(message_id)
             updated_embed = build_auction_embed(
-                item_name=item_name, start_price=start_price, target_price=target_price,
+                item_name=item_name, start_price=start_price,
                 min_step=min_step, current_price=bid_amount, seller_id=seller_id,
                 bidder_name=input_name, bidder_id=message.author.id,
                 end_time=new_end_time, image_url=image_url
@@ -323,7 +320,7 @@ async def setup_panel(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     await init_db()
-    bot.add_view(PanelView()) # ลงทะเบียน View ปุ่มถาวร
+    bot.add_view(PanelView())
     await bot.tree.sync()
     bot.loop.create_task(auction_checker())
     print(f"✅ บอทประมูลพร้อมทำงานในชื่อ {bot.user}")
