@@ -9,18 +9,14 @@ import os
 from datetime import datetime, timezone
 
 # ==================== CONFIGURATION ====================
-# 🔒 ดึง BOT_TOKEN จาก Environment Variables ของ Railway
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 if not BOT_TOKEN:
     raise ValueError("ไม่พบ BOT_TOKEN ใน Environment Variables! กรุณาตั้งค่าใน Railway Settings")
 
-# 🔒 ใส่ Discord User ID ของคุณตรงนี้ (เฉพาะไอดีนี้ที่จะพิมพ์สั่ง /setup_panel ได้)
 ALLOWED_USER_ID = 933529869487321161  
-
-# 📂 กำหนด ID ของหมวดหมู่ต่างๆ
-AUCTION_CATEGORY_ID = 1531512841494855790  # Zone หมวดหมู่สำหรับสร้างห้องประมูล
-PAYMENT_CATEGORY_ID = 1531512976480403556  # Zone หมวดหมู่สำหรับห้องสรุปจ่ายเงิน
+AUCTION_CATEGORY_ID = 1531512841494855790  
+PAYMENT_CATEGORY_ID = 1531512976480403556  
 # =======================================================
 
 intents = discord.Intents.default()
@@ -87,15 +83,13 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
     image_url = discord.ui.TextInput(label="ลิงก์รูปภาพสินค้า (URL ออปชันเสริม)", placeholder="https://i.imgur.com/...", required=False)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
-
         try:
             val_start = int(self.start_price.value)
             val_step = int(self.min_step.value)
             val_dur = int(self.duration_min.value)
             val_target = int(self.target_price.value) if self.target_price.value else 0
         except ValueError:
-            await interaction.followup.send("❌ กรุณากรอก ตัวเลข ให้ถูกต้องในช่องราคาและเวลา!", ephemeral=True)
+            await interaction.response.send_message("❌ กรุณากรอก ตัวเลข ให้ถูกต้องในช่องราคาและเวลา!", ephemeral=True)
             return
 
         img = self.image_url.value.strip() if self.image_url.value else None
@@ -103,8 +97,11 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
         auction_cat = guild.get_channel(AUCTION_CATEGORY_ID)
 
         if not auction_cat:
-            await interaction.followup.send("❌ ไม่พบ Category สำหรับสร้างห้องประมูล กรุณาเช็ก ID!", ephemeral=True)
+            await interaction.response.send_message("❌ ไม่พบ Category สำหรับสร้างห้องประมูล กรุณาเช็ก ID หมวดหมู่!", ephemeral=True)
             return
+
+        # ตอบกลับชั่วคราวก่อนเริ่มสร้างช่อง
+        await interaction.response.send_message("⏳ กำลังสร้างห้องประมูล...", ephemeral=True)
 
         # 1. สร้างห้องประมูลใหม่ใน Zone ประมูล
         channel_name = f"🔨-{self.item_name.value}"[:30]
@@ -137,18 +134,18 @@ class CreateAuctionModal(discord.ui.Modal, title="📝 สร้างการ�
             """, (new_channel.id, msg.id, interaction.user.id, self.item_name.value, val_start, val_target, val_step, val_start, end_time, img))
             await db.commit()
 
-        await interaction.followup.send(f"✅ สร้างห้องประมูลเรียบร้อยแล้วที่ {new_channel.mention}", ephemeral=True)
+        await interaction.edit_original_response(content=f"✅ สร้างห้องประมูลเรียบร้อยแล้วที่ {new_channel.mention}")
 
 # ----------------------------------------------------
-# VIEW: ปุ่มกดหน้าแผงควบคุม (เปิดให้ทุกคนกดได้)
+# VIEW: ปุ่มกดหน้าแผงควบคุม
 # ----------------------------------------------------
 class PanelView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None) # persistent view
 
-    @discord.ui.button(label="➕ เปิดการประมูลใหม่", style=discord.ButtonStyle.primary, custom_id="btn_panel_create")
+    @discord.ui.button(label="➕ เปิดการประมูลใหม่", style=discord.ButtonStyle.primary, custom_id="btn_panel_create_v2")
     async def create_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # ✅ เปิดให้สมาชิกทุกคนสามารถกดปุ่มเปิดประมูลได้
+        # ส่ง Modal โดยตรงทันที ป้องกัน Interaction Timeout
         await interaction.response.send_modal(CreateAuctionModal())
 
 # ----------------------------------------------------
@@ -302,11 +299,10 @@ async def auction_checker():
         await asyncio.sleep(5)
 
 # ----------------------------------------------------
-# COMMAND: ติดตั้งแผงควบคุม (/setup_panel) [🔒 เฉพาะไอดีคุณ]
+# COMMAND: ติดตั้งแผงควบคุม (/setup_panel)
 # ----------------------------------------------------
 @bot.tree.command(name="setup_panel", description="ตั้งค่าแผงควบคุมสร้างประมูลในห้องนี้ (เฉพาะเจ้าของบอท)")
 async def setup_panel(interaction: discord.Interaction):
-    # 🔒 เช็กสิทธิ์ว่าใช่ไอดีคุณหรือไม่
     if interaction.user.id != ALLOWED_USER_ID:
         await interaction.response.send_message("❌ **คุณไม่มีสิทธิ์ใช้คำสั่งนี้!**", ephemeral=True)
         return
@@ -327,7 +323,7 @@ async def setup_panel(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     await init_db()
-    bot.add_view(PanelView())
+    bot.add_view(PanelView()) # ลงทะเบียน View ปุ่มถาวร
     await bot.tree.sync()
     bot.loop.create_task(auction_checker())
     print(f"✅ บอทประมูลพร้อมทำงานในชื่อ {bot.user}")
